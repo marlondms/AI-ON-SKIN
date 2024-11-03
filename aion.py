@@ -270,7 +270,7 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
 
 def run_grid_search(train, testBioactive, testPlacebo, epsilon, tol, c, numberOfProteins, array_of_results):
-  selectedProteins = selectProteins(train, train, numberOfProteins)
+  selectedProteins = selectProteins(train=train, test=train, nProteins=numberOfProteins, tol=tol, epsilon=epsilon, c=c)
 
   mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(train, train, testBioactive, testPlacebo, selectedProteins, epsilon, tol, c)
 
@@ -342,7 +342,7 @@ bioactive = plp_to_df(bioactive_class_descriptions, bioactive_sparse_matrix, bio
 
 
 
-numbersOfProteins = [50, 70, 80, 82, 84, 86, 88, 89, 90, 91, 92, 94, 96, 98, 100, 105, 110, 115, 120, 130, 140, 150, 170, 200, 250]
+numbersOfProteins = [50]
 tols = [0.1]
 epsilons = [0.001]
 cs = [10**1]
@@ -359,7 +359,7 @@ for c in cs:
     for tol in tols:
         for epsilon in epsilons:
             for numberOfProteins in numbersOfProteins:
-                thread = threading.Thread(target=run_grid_search, args=(epsilon, tol, c, numberOfProteins, array_of_results))
+                thread = threading.Thread(target=run_grid_search, args=(people, placebo, bioactive, epsilon, tol, c, numberOfProteins, array_of_results))
                 threads.append(thread)
                 thread.start()
 
