@@ -325,7 +325,7 @@ def plot_mae_by_numberOfProteins(mae_results):
 
 # Main execution
 # Set the directory path
-directory = r"D:\Arquivos\Trabalhos\IC\results aion\For github"
+directory = r".\PLPs"
 
 # Process each .plp file and assign to distinct variables
 people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "people.plp"))
