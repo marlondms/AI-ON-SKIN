@@ -145,25 +145,42 @@ def selectProteins(train, test, nProteins, tol, epsilon, c):
 
     return selected_proteins  # Return the names of the selected proteins
 
-def plot_results(original, predicted, mae, r2, title, text_pos=(40, 75), xlim=(20, 80), ylim=(20, 80)):
+def plot_results(original, predicted, mae, r2, title, xlim=(20, 80), ylim=(20, 80)):
     """
-    Helper function to plot actual vs predicted age.
+    Helper function to plot actual vs predicted age with sorted data and metrics at the top center.
     """
+    # Sort data by actual age
+    data = pd.DataFrame({'Original': original, 'Predicted': predicted})
+    data = data.sort_values(by='Original')
+
+    # Extract sorted values
+    sorted_original = data['Original'].values
+    sorted_predicted = data['Predicted'].values
+
+    # Plotting
     plt.figure(figsize=(10, 6))
-    plt.scatter(original, predicted, alpha=0.6, color='b', label='Predictions')
-    plt.plot([min(predicted), max(predicted)], [min(predicted), max(predicted)], color='r', linestyle='--')
-    plt.text(*text_pos, f'MAE: {mae:.2f}, R²: {r2:.2f}', fontsize=12, color='black')
+    plt.scatter(sorted_original, sorted_predicted, alpha=0.6, color='b', label='Predictions')
+    plt.plot(xlim, ylim, color='r', linestyle='--', label='Ideal Fit')  # Ideal diagonal line
     plt.xlim(*xlim)
     plt.ylim(*ylim)
     plt.xlabel('Actual Age')
     plt.ylabel('Predicted Age')
     plt.title(title)
     plt.legend()
+
+    # Place MAE and R² metrics at the top center
+    center_x = (xlim[0] + xlim[1]) / 2
+    plt.text(center_x, ylim[1] - 5, f'MAE: {mae:.2f}\nR²: {r2:.2f}', fontsize=12, color='black',
+         ha='center', va='top', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
+
+
     plt.show()
     plt.close()
+
+    # Print metrics
     print(title)
     print("Mean Absolute Error (MAE):", mae)
-    print("Coefficient of determination (R²):", r2)
+    print("Coefficient of Determination (R²):", r2)
 
 def Plot(results1, results2, results3, mae1, r21, mae2, r22, mae3, r23):
     """
@@ -331,5 +348,5 @@ selectedProteins = selectProteins(train=people, test=people, nProteins=numbersOf
 
 mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(people, people, bioactive, placebo, selectedProteins, epsilons, tols, cs)
 
-Plot(results1,results2,results3)
+Plot(results1,results2,results3, mae1, r21, mae2, r22, mae3, r23)
 
