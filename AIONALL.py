@@ -324,7 +324,8 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
 # Main execution
 # Set the directory path
-directory = r"C:\Users\Marlon\Desktop\Aion\XIC_PLP"
+directory = r"C:\Users\Marlon\Desktop\Aion\AI-ON-SKIN\PLPs"
+
 
 # Process each .plp file and assign to distinct variables
 people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "people.plp"))
@@ -336,24 +337,21 @@ people = plp_to_df(people_class_descriptions, people_sparse_matrix, people_index
 placebo = plp_to_df(placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping)
 bioactive = plp_to_df(bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping)
 
-# Convert all dataframe values to numeric where possible, excluding the first column
-people.iloc[:, 1:] = people.iloc[:, 1:].applymap(lambda x: pd.to_numeric(x, errors='coerce'))
-placebo.iloc[:, 1:] = placebo.iloc[:, 1:].applymap(lambda x: pd.to_numeric(x, errors='coerce'))
-bioactive.iloc[:, 1:] = bioactive.iloc[:, 1:].applymap(lambda x: pd.to_numeric(x, errors='coerce'))
+all_columns = set(people.columns).union(placebo.columns).union(bioactive.columns)
+people = people.reindex(columns=all_columns, fill_value=0)
+placebo = placebo.reindex(columns=all_columns, fill_value=0)
+bioactive = bioactive.reindex(columns=all_columns, fill_value=0)
 
-# Apply negative natural logarithm to the values, excluding the first column
-people.iloc[:, 1:] = people.iloc[:, 1:].applymap(lambda x: -np.log(x) if pd.notnull(x) and x > 0 else 0)
-placebo.iloc[:, 1:] = placebo.iloc[:, 1:].applymap(lambda x: -np.log(x) if pd.notnull(x) and x > 0 else 0)
-bioactive.iloc[:, 1:] = bioactive.iloc[:, 1:].applymap(lambda x: -np.log(x) if pd.notnull(x) and x > 0 else 0)
+allsamples = pd.concat([people, placebo, bioactive], ignore_index=True)
 
-numbersOfProteins = 300
+numbersOfProteins = 94
 tols = 0.1
 epsilons = 0.001
 cs = 10**14
 
-selectedProteins = selectProteins(train=people, test=people, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs)
+selectedProteins = selectProteins(train=allsamples, test=allsamples, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs)
 
-mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(people, people, bioactive, placebo, selectedProteins, epsilons, tols, cs)
+mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(allsamples, people, bioactive, placebo, selectedProteins, epsilons, tols, cs)
 
 Plot(results1,results2,results3, mae1, r21, mae2, r22, mae3, r23)
 

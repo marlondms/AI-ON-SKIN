@@ -135,7 +135,7 @@ def selectProteins(train, test, nProteins, tol, epsilon, c):
     y_test_original = test['Age/Protein']
 
     # Perform Recursive Feature Elimination (RFE) with SVR to select the most important proteins
-    linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, cache_size=20000)  # Set up the SVR model
+    linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, max_iter=100000, cache_size=20000)  # Set up the SVR model
     
     rfe = RFE(estimator=linear_model, n_features_to_select=nProteins)  # Initialize RFE to select 'nProteins' features
     rfe.fit(X_train, y_train)  # Fit RFE to the right dataset
@@ -211,7 +211,7 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
         # Train the model
         
-        ransac_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, cache_size=20000)
+        ransac_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, max_iter=100000, cache_size=20000)
         ransac_model.fit(X_train, y_train)
 
         # Predict the age for the removed individual and store the results
@@ -298,7 +298,7 @@ def run_grid_search(train, testBioactive, testPlacebo, epsilon, tol, c, numberOf
   result_tuple = (numberOfProteins, result)
   array_of_results.append(result_tuple)
 
-  with open(f'C:\\Users\\marlo\\Desktop\\AIONSKIN\\AI-ON-SKIN\\Results\\{numberOfProteins}.txt', "a") as file:
+  with open(f'C:\\Users\\Marlon\\Desktop\\Aion\\AI-ON-SKIN\\Results{numberOfProteins}.txt', "a") as file:
     file.write(f'PreTreatment:\t{mae1}\t{r21}\n')
     file.write(f'Bioester:\t{mae2}\t{r22}\n')
     file.write(f'Placebo:\t{mae3}\t{r23}\n')
@@ -343,7 +343,7 @@ def plot_mae_by_numberOfProteins(mae_results):
 
 # Main execution
 # Set the directory path
-directory = r"C:\Users\marlo\Desktop\AIONSKIN\AI-ON-SKIN\PLPs"
+directory = r"C:\Users\Marlon\Desktop\Aion\AI-ON-SKIN\PLPs"
 
 
 # Process each .plp file and assign to distinct variables
@@ -356,9 +356,8 @@ people = plp_to_df(people_class_descriptions, people_sparse_matrix, people_index
 placebo = plp_to_df(placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping)
 bioactive = plp_to_df(bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping)
 
-#total_proteins = people.shape[1] - 1
-#numbersOfProteins = list(range(total_proteins, 0, -1))
-numbersOfProteins = [94]
+total_proteins = people.shape[1] - 1
+numbersOfProteins = list(range(total_proteins, 0, -1))
 tols = [0.1]
 epsilons = [0.001]
 cs = [10**14]
