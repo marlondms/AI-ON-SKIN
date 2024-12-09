@@ -310,7 +310,7 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
 # Main execution
 # Set the directory path
-directory = r"C:\Users\Marlon\Desktop\Aion\PLPs"
+directory = r"C:\Users\Marlon\Desktop\Aion\AI-ON-SKIN\PLPs"
 
 # Process each .plp file and assign to distinct variables
 people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "people.plp"))
