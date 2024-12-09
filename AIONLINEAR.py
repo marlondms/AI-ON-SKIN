@@ -132,9 +132,10 @@ def selectProteins(train, test, nProteins, tol, epsilon, c):
     
     # Define features (X) and target (y) for the test dataset
     X_test = test[common_columns]
-   
-    # Perform Recursive Feature Elimination (RFE) with SVR to select the most important proteins
-    linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, cache_size=20000)  # Set up the SVR model
+    y_test_original = test['Age/Protein']
+
+    # Perform Recursive Feature Elimination (RFE) with LinearRegression to select the most important proteins
+    linear_model = LinearRegression()
     
     rfe = RFE(estimator=linear_model, n_features_to_select=nProteins)  # Initialize RFE to select 'nProteins' features
     rfe.fit(X_train, y_train)  # Fit RFE to the right dataset
@@ -145,41 +146,6 @@ def selectProteins(train, test, nProteins, tol, epsilon, c):
 
     return selected_proteins  # Return the names of the selected proteins
 
-def plot_results(original, predicted, mae, r2, title, text_pos=(40, 75), xlim=(20, 80), ylim=(20, 80)):
-    """
-    Helper function to plot actual vs predicted age.
-    """
-    plt.figure(figsize=(10, 6))
-    plt.scatter(original, predicted, alpha=0.6, color='b', label='Predictions')
-    plt.plot([min(predicted), max(predicted)], [min(predicted), max(predicted)], color='r', linestyle='--')
-    plt.text(*text_pos, f'MAE: {mae:.2f}, R²: {r2:.2f}', fontsize=12, color='black')
-    plt.xlim(*xlim)
-    plt.ylim(*ylim)
-    plt.xlabel('Actual Age')
-    plt.ylabel('Predicted Age')
-    plt.title(title)
-    plt.legend()
-    plt.show()
-    plt.close()
-    print(title)
-    print("Mean Absolute Error (MAE):", mae)
-    print("Coefficient of determination (R²):", r2)
-
-def Plot(results1, results2, results3, mae1, r21, mae2, r22, mae3, r23):
-    """
-    Plots actual vs predicted ages for three datasets and prints evaluation metrics.
-    """
-    # Plot for Predict on Self
-    plot_results(results1['Original Age'], results1['Predicted Age'], mae1, r21, 
-                 'Predict on Self: Actual vs Predicted Age')
-
-    # Plot for Predict on Bioactive
-    plot_results(results2['Original Age'], results2['Predicted Age'], mae2, r22, 
-                 'Predict on Bioactive: Actual vs Predicted Age')
-
-    # Plot for Predict on Placebo
-    plot_results(results3['Original Age'], results3['Predicted Age'], mae3, r23, 
-                 'Predict on Placebo: Actual vs Predicted Age')
 
 
 def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
@@ -245,7 +211,7 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
         # Train the model
         
-        ransac_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, cache_size=20000)
+        ransac_model = LinearRegression()
         ransac_model.fit(X_train, y_train)
 
         # Predict the age for the removed individual and store the results
@@ -308,9 +274,77 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
     return mae1, r21, result_df1, mae2, r22, result_df2, mae3, r23, result_df3
 
 
+def run_grid_search(train, testBioactive, testPlacebo, epsilon, tol, c, numberOfProteins, array_of_results):
+  start_time = time.time()  # Start time before task submission
+  print(start_time)
+  selectedProteins = selectProteins(train=train, test=train, nProteins=numberOfProteins, tol=tol, epsilon=epsilon, c=c)
+
+  mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(train, train, testBioactive, testPlacebo, selectedProteins, epsilon, tol, c)
+
+  y_test_original1 = results1['Original Age']
+  y_test_pred1 = results1['Predicted Age']
+  tuple1 = [mae1, r21, results1]
+
+  y_test_original2 = results2['Original Age']
+  y_test_pred2 = results2['Predicted Age']
+  tuple2 = [mae2, r22, results2]
+
+  y_test_original3 = results3['Original Age']
+  y_test_pred3 = results3['Predicted Age']
+  tuple3 = [mae3, r23, results3]
+
+  #result = [numberOfProteins, tuple1, tuple2, tuple3]
+  result = [numberOfProteins, tol, epsilon, c, tuple1, tuple2, tuple3]
+  result_tuple = (numberOfProteins, result)
+  array_of_results.append(result_tuple)
+
+  with open(f'C:\\Users\\marlo\\Desktop\\AIONSKIN\\AI-ON-SKIN\\Results\\{numberOfProteins}.txt', "a") as file:
+    file.write(f'PreTreatment:\t{mae1}\t{r21}\n')
+    file.write(f'Bioester:\t{mae2}\t{r22}\n')
+    file.write(f'Placebo:\t{mae3}\t{r23}\n')
+
+
+  end_time = time.time()  # End time after task submission
+  elapsed_time = end_time - start_time
+  print(f"Task started for: {numberOfProteins} (Elapsed time: {elapsed_time:.2f} seconds)")
+
+
+  print("Concluded iteration on:")
+  print("epsilon:", epsilon)
+  print("tol:", tol)
+  print("c:", c)
+  print("numerOfProteins:", numberOfProteins)
+  print("Current time:", datetime.now())
+  print("-----------------------------------------------------------------------------------------------------------------------------------------------------------")
+
+
+def plot_mae_by_numberOfProteins(mae_results):
+    # Separate the data into x and y lists for plotting
+    x = [item[0] for item in mae_results]
+    y = [item[1] for item in mae_results]
+
+    # Plot the results
+    plt.figure(figsize=(10, 6))
+    plt.scatter(x, y, color='b', label="MAE")
+    plt.xlabel("Number of Proteins")
+    plt.ylabel("MAE (Mean Absolute Error)")
+    plt.title("MAE vs Number of Proteins")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+
+
+
+
+
+
+
 # Main execution
 # Set the directory path
-directory = r"C:\Users\Marlon\Desktop\Aion\PLPs"
+directory = r"C:\Users\marlo\Desktop\AIONSKIN\AI-ON-SKIN\PLPs"
+
 
 # Process each .plp file and assign to distinct variables
 people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "people.plp"))
@@ -322,14 +356,64 @@ people = plp_to_df(people_class_descriptions, people_sparse_matrix, people_index
 placebo = plp_to_df(placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping)
 bioactive = plp_to_df(bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping)
 
-numbersOfProteins = 94
-tols = 0.1
-epsilons = 0.001
-cs = 10**14
+#total_proteins = people.shape[1] - 1
+#numbersOfProteins = list(range(total_proteins, 0, -1))
+numbersOfProteins = [94]
+tols = [0.1]
+epsilons = [0.001]
+cs = [10**14]
 
-selectedProteins = selectProteins(train=people, test=people, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs)
+MAEresultsPreTreatment = []
+MAEresultsBioactive = []
+MAEresultsPlacebo = []
 
-mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(people, people, bioactive, placebo, selectedProteins, epsilons, tols, cs)
+# Create a list to hold all threads
+threads = []
+array_of_results = []
 
-Plot(results1,results2,results3)
 
+# Automatically detect number of CPU cores and set max threads to half
+MAX_THREADS = 12  #Ensure at least 1 thread
+
+print(f"Max Threads: {MAX_THREADS}")
+
+# Create a thread pool with the calculated number of threads
+with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+    futures = []
+    for c in cs:
+        for tol in tols:
+            for epsilon in epsilons:
+                for numberOfProteins in numbersOfProteins:
+                    # Submit each run_grid_search task to the executor
+                    future = executor.submit(
+                        run_grid_search,
+                        people, placebo, bioactive,
+                        epsilon, tol, c, numberOfProteins, array_of_results
+                    )
+                    futures.append(future)
+                    print(f"Task submitted for: {numberOfProteins}")
+                    
+    # Optional: Wait for all futures to complete
+    for future in futures:
+        future.result()  # This will raise any exceptions encountered during execution
+
+print("===================================================================")
+print("All tasks have completed.")
+
+
+
+for result in array_of_results:
+    results = result[1]
+    numberOfProteinsresult, tolresult, epsilonresult, cresult, tuple1, tuple2, tuple3 = results
+
+    mae1, r21, results1 = tuple1
+    mae2, r22, results2 = tuple2
+    mae3, r23, results3 = tuple3
+
+    MAEresultsPreTreatment.append((numberOfProteinsresult, mae1))
+    MAEresultsBioactive.append((numberOfProteinsresult, mae2))
+    MAEresultsPlacebo.append((numberOfProteinsresult, mae3))
+
+plot_mae_by_numberOfProteins(MAEresultsPreTreatment)
+plot_mae_by_numberOfProteins(MAEresultsBioactive)
+plot_mae_by_numberOfProteins(MAEresultsPlacebo)
