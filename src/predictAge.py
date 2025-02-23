@@ -3,15 +3,15 @@ import pandas as pd
 from typing import List, Dict, Tuple
 import os
 from sklearn.svm import SVR
-from sklearn.linear_model import LinearRegression
 from sklearn.feature_selection import RFE
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, r2_score
-import threading
 from datetime import datetime
 import time
-from concurrent.futures import ThreadPoolExecutor
+from sklearn.preprocessing import MinMaxScaler
+from scipy.stats import mannwhitneyu, wilcoxon, ttest_rel
+import textwrap
 
 def parse_plp_file(plp_path: str) -> Tuple[Dict[int, str], List[Dict], Dict[str, str]]:
     """
@@ -77,6 +77,10 @@ def parse_plp_file(plp_path: str) -> Tuple[Dict[int, str], List[Dict], Dict[str,
             index_section = True
             continue
 
+        if line.strip() == "###SecondaryLabels" and index_section:
+          break  # Stop processing further lines when ###SecondaryLabels is encountered
+
+
         if index_section and line.strip():
             parts = line.strip().split('\t')
             if len(parts) >= 2:
@@ -121,82 +125,46 @@ def plp_to_df(class_descriptions: Dict[int, str], sparse_matrix: List[Dict], ind
 
 
 # Select the proteins with RFE
-def selectProteins(train, test, nProteins, tol, epsilon, c):
+def selectProteins(train, test, nProteins, tol, epsilon, c, max_iter, selectedProteins, proteinsToIgnore):
     # Identify and filter the common columns between the datasets
     common_columns = train.columns.intersection(test.columns)
     common_columns = common_columns.drop('Age/Protein')  # Exclude the target column 'Age/Protein'
-    
+
+    print("all proteins:", len(common_columns))
+    if (not proteinsToIgnore.empty):
+      common_columns = common_columns.difference(proteinsToIgnore)
+    if (not selectedProteins.empty):
+      common_columns = common_columns[common_columns.isin(selectedProteins)]
+
+    print("proteins considered:", len(common_columns))
+
+
     # Define features (X) and target (y) for the train dataset
     X_train = train[common_columns]
     y_train = train['Age/Protein']
-    
+
     # Define features (X) and target (y) for the test dataset
     X_test = test[common_columns]
-   
+
     # Perform Recursive Feature Elimination (RFE) with SVR to select the most important proteins
-    #linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, cache_size=20000)  # Set up the SVR model
-    linear_model = LinearRegression()
-    
+    scaler = MinMaxScaler()
+    scaler.fit(X_train)
+    X_train_scaled = pd.DataFrame(scaler.transform(X_train))
+
+    linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, cache_size=20000, max_iter=max_iter)  # Set up the SVR model
+
     rfe = RFE(estimator=linear_model, n_features_to_select=nProteins)  # Initialize RFE to select 'nProteins' features
-    rfe.fit(X_train, y_train)  # Fit RFE to the right dataset
+    rfe.fit(X_train_scaled, y_train)  # Fit RFE to the right dataset
 
     # Get the selected features and extract the corresponding protein data
     selected_features = rfe.support_  # Boolean mask indicating selected features
-    selected_proteins = X_test.columns[selected_features]  # Column names of the selected proteins
+    selected_proteins = X_train.columns[selected_features]  # Column names of the selected proteins
 
     return selected_proteins  # Return the names of the selected proteins
 
-def plot_results(original, predicted, mae, r2, title, xlim=None, ylim=None):
-    # Convert original and predicted to numeric to avoid type issues
-    original = pd.to_numeric(original, errors='coerce')
-    predicted = pd.to_numeric(predicted, errors='coerce')
-
-    data = pd.DataFrame({'Original': original, 'Predicted': predicted}).dropna()
-    data = data.sort_values(by='Original')
-
-    sorted_original = data['Original'].values
-    sorted_predicted = data['Predicted'].values
-
-    if xlim is None:
-        xlim = (min(sorted_original), max(sorted_original))
-    if ylim is None:
-        ylim = (min(sorted_predicted), max(sorted_predicted))
-
-    plt.figure(figsize=(10, 6))
-    plt.scatter(sorted_original, sorted_predicted, alpha=0.6, label='Predictions')
-    plt.plot(xlim, xlim, color='r', linestyle='--', label='Ideal Fit')
-    plt.xlim(*xlim)
-    plt.ylim(*ylim)
-    plt.xlabel('Actual Age')
-    plt.ylabel('Predicted Age')
-    plt.title(title)
-    plt.legend()
-    text_x = (xlim[0] + xlim[1]) / 2
-    text_y = ylim[1] - (ylim[1] - ylim[0]) * 0.05
-    plt.text(text_x, text_y, f'MAE: {mae:.2f}\nR²: {r2:.2f}', fontsize=12, color='black',
-             ha='center', va='top', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
-    plt.grid(visible=True, linestyle='--', alpha=0.7)
-    plt.show()
 
 
-def Plot(results1, results2, results3, mae1, r21, mae2, r22, mae3, r23):
-    """
-    Plots actual vs predicted ages for three datasets and prints evaluation metrics.
-    """
-    # Plot for Predict on Self
-    plot_results(results1['Original Age'], results1['Predicted Age'], mae1, r21, 
-                 'Predict on Self: Actual vs Predicted Age')
-
-    # Plot for Predict on Bioactive
-    plot_results(results2['Original Age'], results2['Predicted Age'], mae2, r22, 
-                 'Predict on Bioactive: Actual vs Predicted Age')
-
-    # Plot for Predict on Placebo
-    plot_results(results3['Original Age'], results3['Predicted Age'], mae3, r23, 
-                 'Predict on Placebo: Actual vs Predicted Age')
-
-
-def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
+def PredictAges(train, test1, test2, test3, selected_proteins, eps, tol, c, max_iter):
 
     # Identify and filter the common columns across datasets
     common_columns = train.columns.intersection(test1.columns).intersection(test2.columns).intersection(test3.columns)
@@ -216,6 +184,15 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
     y_test_original2 = test2['Age/Protein']
     y_test_original3 = test3['Age/Protein']
 
+
+    #normalize
+    scaler = MinMaxScaler()
+    scaler.fit(X_training)
+    X_training = pd.DataFrame(scaler.transform(X_training))
+    X_test1 = pd.DataFrame(scaler.transform(X_test1))
+    X_test2 = pd.DataFrame(scaler.transform(X_test2))
+    X_test3 = pd.DataFrame(scaler.transform(X_test3))
+
     # Convert the data to NumPy arrays for processing
     X_training = X_training.to_numpy()
     X_test1 = X_test1.to_numpy()
@@ -230,15 +207,15 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
     y_test_true2 = []
     y_test_true3 = []
 
-    # Perform Leave-Age-Out cross-validation manually
-    for i in range(len(X_training)):
-        # Separate sample i from the rest of the data
-        ageToRemove = y_training[i]
+    prediction_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, cache_size=20000, max_iter=max_iter)
+    prediction_model.fit(X_training, y_training)
 
-        # Remove instances with the specified age from training data
-        indices_to_remove = np.where(y_training == ageToRemove)[0]
-        X_train = np.delete(X_training, indices_to_remove, axis=0)
-        y_train = np.delete(y_training, indices_to_remove, axis=0)
+    unique_ages = pd.concat([y_training, y_test_original1, y_test_original2, y_test_original3]).unique()
+    print("unique_ages: ", unique_ages)
+
+    for i in unique_ages:
+        # Separate sample i from the rest of the data
+        ageToRemove = i
 
         # Get indices of the specified age in each test set
         first_index_equal_to_age1 = np.where(y_test_original1 == ageToRemove)[0]
@@ -257,14 +234,9 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
         if y_test1.size == 0 and y_test2.size == 0 and y_test3.size == 0:
             continue
 
-        # Train the model
-        #  ransac_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, cache_size=20000)
-        ransac_model = LinearRegression()
-        ransac_model.fit(X_train, y_train)
-
         # Predict the age for the removed individual and store the results
         if y_test1.size != 0:
-            y_pred1 = ransac_model.predict(X_test1_filtered)
+            y_pred1 = prediction_model.predict(X_test1_filtered)
             y_test_pred1.append(y_pred1[0])
             y_test_true1.append(y_test1[0])
             if len(y_pred1) == 2:
@@ -272,7 +244,7 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
                 y_test_true1.append(y_test1[1])
 
         if y_test2.size != 0:
-            y_pred2 = ransac_model.predict(X_test2_filtered)
+            y_pred2 = prediction_model.predict(X_test2_filtered)
             y_test_pred2.append(y_pred2[0])
             y_test_true2.append(y_test2[0])
             if len(y_pred2) == 2:
@@ -280,7 +252,7 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
                 y_test_true2.append(y_test2[1])
 
         if y_test3.size != 0:
-            y_pred3 = ransac_model.predict(X_test3_filtered)
+            y_pred3 = prediction_model.predict(X_test3_filtered)
             y_test_pred3.append(y_pred3[0])
             y_test_true3.append(y_test3[0])
             if len(y_pred3) == 2:
@@ -307,51 +279,214 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
     # Create dataframes with original and predicted ages for each test set
     result_df1 = pd.DataFrame({
-        'Original Age': y_test_true1,
-        'Predicted Age': y_test_pred1
+        'Idade Original': y_test_true1,
+        'Idade Predita': y_test_pred1
     })
     result_df2 = pd.DataFrame({
-        'Original Age': y_test_true2,
-        'Predicted Age': y_test_pred2
+        'Idade Original': y_test_true2,
+        'Idade Predita': y_test_pred2
     })
     result_df3 = pd.DataFrame({
-        'Original Age': y_test_true3,
-        'Predicted Age': y_test_pred3
+        'Idade Original': y_test_true3,
+        'Idade Predita': y_test_pred3
     })
 
     return mae1, r21, result_df1, mae2, r22, result_df2, mae3, r23, result_df3
 
 
-# Main execution
-# Set the directory path
-directory = r"C:\Users\Marlon\Desktop\Aion\AI-ON-SKIN\PLPs"
 
+def boxplot2(dataframes, labels, wrap_length=10):
+    """
+    Plots a boxplot for a list of dataframes with corresponding labels and prints summary statistics.
+
+    Parameters:
+        dataframes (list): A list of pandas Series or DataFrames containing numeric data.
+        labels (list): A list of strings corresponding to the labels for each dataframe.
+        wrap_length (int): Maximum character length before wrapping labels to a new line.
+    """
+    if len(dataframes) != len(labels):
+        raise ValueError("The number of dataframes and labels must be the same.")
+
+    # Convert all dataframes to numeric, drop NaN values, and store in a list
+    cleaned_data = [pd.to_numeric(df, errors='coerce').dropna() for df in dataframes]
+
+    # Compute statistics
+    for label, data in zip(labels, cleaned_data):
+        print(f"Statistics for {label}:")
+        print(f"  Mean: {np.mean(data):.2f}")
+        print(f"  Median (Q2): {np.median(data):.2f}")
+        print(f"  Q1 (25th percentile): {np.percentile(data, 25):.2f}")
+        print(f"  Q3 (75th percentile): {np.percentile(data, 75):.2f}")
+        print(f"  Min: {np.min(data):.2f}")
+        print(f"  Max: {np.max(data):.2f}")
+        print(f"  Standard Deviation: {np.std(data, ddof=1):.2f}")
+        print("-" * 40)
+
+    # Wrap labels to new lines if they are too long
+    wrapped_labels = ['\n'.join(textwrap.wrap(label, wrap_length)) for label in labels]
+
+    # Plotting the box plot
+    plt.figure(figsize=(6, 4))
+    plt.boxplot(cleaned_data, labels=wrapped_labels)
+
+    # Adjust x-ticks for better readability
+    plt.xticks(rotation=0, ha='center')
+    plt.ylim(0, 160)
+    plt.ylabel('Values')
+    plt.title('Boxplot of DataFrames')
+    plt.grid(visible=True, linestyle='--', alpha=0.7)
+
+    # Show the plot
+    plt.show()
+
+
+
+
+def compare_treatments_mannwhitneyu(older_bioactive, younger_bioactive, older_placebo, younger_placebo):
+    """
+    Performs the Mann-Whitney U test for both bioactive and placebo groups,
+    comparing older and younger cohorts.
+
+    Parameters:
+    older_bioactive (list or array): Ages of the older cohort in the bioactive group.
+    younger_bioactive (list or array): Ages of the younger cohort in the bioactive group.
+    older_placebo (list or array): Ages of the older cohort in the placebo group.
+    younger_placebo (list or array): Ages of the younger cohort in the placebo group.
+    """
+    # Bioactive treatment comparison
+    stat_bioactive, p_bioactive = mannwhitneyu(older_bioactive, younger_bioactive, alternative='two-sided')
+    print(f"Bioactive Treatment: U-statistic = {stat_bioactive:.6f}, p-value = {p_bioactive:.6f}")
+
+    # Placebo treatment comparison
+    stat_placebo, p_placebo = mannwhitneyu(older_placebo, younger_placebo, alternative='two-sided')
+    print(f"Placebo Treatment: U-statistic = {stat_placebo:.6f}, p-value = {p_placebo:.6f}")
+
+def compare_treatments_wilcoxon(older_bioactive, younger_bioactive, older_placebo, younger_placebo):
+    stat_young, p_young = wilcoxon(younger_placebo, younger_bioactive, alternative='two-sided')
+    print(f"Younger Treatment: U-statistic = {stat_young:.6f}, p-value = {p_young:.6f}")
+
+    # Placebo treatment comparison
+    stat_older, p_older = wilcoxon(older_placebo, older_bioactive, alternative='two-sided')
+    print(f"Older Treatment: U-statistic = {stat_older:.6f}, p-value = {p_older:.6f}")
+
+
+def compare_treatments_ttest(older_bioactive, younger_bioactive, older_placebo, younger_placebo):
+    # Bioactive treatment comparison (Younger cohort)
+    stat_young, p_young = ttest_rel(younger_placebo, younger_bioactive)
+    print(f"Younger Treatment: t-statistic = {stat_young:.6f}, p-value = {p_young:.6f}")
+
+    # Placebo treatment comparison (Older cohort)
+    stat_older, p_older = ttest_rel(older_placebo, older_bioactive)
+    print(f"Older Treatment: t-statistic = {stat_older:.6f}, p-value = {p_older:.6f}")
+
+
+
+
+
+# Main execution -----------------------------------------------------------------------------------------------------------------------------------------------
+# Set the plp directory path
+directory = r"./plp"
+
+#initial selection of proteins. Keep empty pd.Index([]) to use all proteins
+selectedProteins = pd.Index([])
+proteinsToIgnore = pd.Index([])
+
+# Display all rows
+pd.set_option('display.max_rows', None)
 
 # Process each .plp file and assign to distinct variables
-people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "people.plp"))
-placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping = parse_plp_file(os.path.join(directory, "placebo.plp"))
-bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping = parse_plp_file(os.path.join(directory, "bioactive.plp"))
+people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "People.plp"))
+placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping = parse_plp_file(os.path.join(directory, "Placebo.plp"))
+bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping = parse_plp_file(os.path.join(directory, "Bioactive.plp"))
 
 # Convert to DataFrames
 people = plp_to_df(people_class_descriptions, people_sparse_matrix, people_index_mapping)
 placebo = plp_to_df(placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping)
 bioactive = plp_to_df(bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping)
 
+
+print(people.columns)
+print(placebo.columns)
+print(bioactive.columns)
+
+
+people['Age/Protein'] = people['Age/Protein'].astype(int)
+placebo['Age/Protein'] = placebo['Age/Protein'].astype(int)
+bioactive['Age/Protein'] = bioactive['Age/Protein'].astype(int)
+
 all_columns = set(people.columns).union(placebo.columns).union(bioactive.columns)
 people = people.reindex(columns=all_columns, fill_value=0)
 placebo = placebo.reindex(columns=all_columns, fill_value=0)
 bioactive = bioactive.reindex(columns=all_columns, fill_value=0)
 
-allsamples = pd.concat([people, placebo, bioactive], ignore_index=True)
 
-numbersOfProteins = 94
+allsamples = pd.concat([people, placebo, bioactive], ignore_index=True)
+nonbioactive = pd.concat([people, placebo], ignore_index=True)
+nonplacebo = pd.concat([people, bioactive], ignore_index=True)
+
+
+
+numbersOfProteins = 120
 tols = 0.1
 epsilons = 0.001
 cs = 10**14
+max_iters=10000000
 
-selectedProteins = selectProteins(train=allsamples, test=allsamples, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs)
+selectedProteins = selectProteins(train=people, test=people, selectedProteins=selectedProteins, proteinsToIgnore=proteinsToIgnore, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs, max_iter=max_iters)
+mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = PredictAges(people, people, bioactive, placebo, selectedProteins, epsilons, tols, cs, max_iters)
 
-mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(allsamples, people, bioactive, placebo, selectedProteins, epsilons, tols, cs)
 
-Plot(results1,results2,results3, mae1, r21, mae2, r22, mae3, r23)
 
+
+
+print("=================================================================================================")
+#PLOTTING RESULTS ======================================================================================
+
+
+
+labels = ['Actual Ages','Pre-treatment prediction','Bioactive prediction', 'Placebo prediction']
+labels = ['Bioactive prediction', 'Placebo prediction']
+
+
+#plotting results for older or equal to 50
+results1_filtered = results1[results1['Idade Original'] >= 50].copy()
+results2_filtered = results2[results2['Idade Original'] >= 50].copy()
+results3_filtered = results3[results3['Idade Original'] >= 50].copy()
+
+dataframes = [
+    results2_filtered['Idade Predita'].copy(),
+    results3_filtered['Idade Predita'].copy()
+]
+print("\n\n\nolder or equal to 50:")
+boxplot2(dataframes, labels)
+
+older_bioactive = results2_filtered['Idade Predita'].copy()
+older_placebo = results3_filtered['Idade Predita'].copy()
+
+
+
+#plotting results for younger than 50
+results1_filtered = results1[results1['Idade Original'] < 50].copy()
+results2_filtered = results2[results2['Idade Original'] < 50].copy()
+results3_filtered = results3[results3['Idade Original'] < 50].copy()
+
+younger_bioactive = results2_filtered['Idade Predita'].copy()
+younger_placebo = results3_filtered['Idade Predita'].copy()
+
+dataframes = [
+    results2_filtered['Idade Predita'].copy(),
+    results3_filtered['Idade Predita'].copy()
+]
+print("\n\n\nyounger than 50:")
+boxplot2(dataframes, labels)
+
+
+#p-values:
+print('mannwhitneyu:')
+compare_treatments_mannwhitneyu(older_bioactive=older_bioactive, younger_bioactive=younger_bioactive, older_placebo=older_placebo, younger_placebo=younger_placebo)
+
+print('wilcoxon:')
+compare_treatments_wilcoxon(older_bioactive=older_bioactive, younger_bioactive=younger_bioactive, older_placebo=older_placebo, younger_placebo=younger_placebo)
+
+print('t-test:')
+compare_treatments_ttest(older_bioactive=older_bioactive, younger_bioactive=younger_bioactive, older_placebo=older_placebo, younger_placebo=younger_placebo)

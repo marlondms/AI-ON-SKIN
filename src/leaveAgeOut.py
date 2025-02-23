@@ -3,15 +3,14 @@ import pandas as pd
 from typing import List, Dict, Tuple
 import os
 from sklearn.svm import SVR
-from sklearn.linear_model import LinearRegression
 from sklearn.feature_selection import RFE
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, r2_score
-import threading
 from datetime import datetime
 import time
-from concurrent.futures import ThreadPoolExecutor
+from sklearn.preprocessing import MinMaxScaler
+import textwrap
 
 def parse_plp_file(plp_path: str) -> Tuple[Dict[int, str], List[Dict], Dict[str, str]]:
     """
@@ -77,6 +76,10 @@ def parse_plp_file(plp_path: str) -> Tuple[Dict[int, str], List[Dict], Dict[str,
             index_section = True
             continue
 
+        if line.strip() == "###SecondaryLabels" and index_section:
+          break  # Stop processing further lines when ###SecondaryLabels is encountered
+
+
         if index_section and line.strip():
             parts = line.strip().split('\t')
             if len(parts) >= 2:
@@ -121,82 +124,47 @@ def plp_to_df(class_descriptions: Dict[int, str], sparse_matrix: List[Dict], ind
 
 
 # Select the proteins with RFE
-def selectProteins(train, test, nProteins, tol, epsilon, c):
+def selectProteins(train, test, nProteins, tol, epsilon, c, max_iter, selectedProteins, proteinsToIgnore):
     # Identify and filter the common columns between the datasets
     common_columns = train.columns.intersection(test.columns)
     common_columns = common_columns.drop('Age/Protein')  # Exclude the target column 'Age/Protein'
-    
+
+    print("all proteins:", len(common_columns))
+    if (not proteinsToIgnore.empty):
+      common_columns = common_columns.difference(proteinsToIgnore)
+    if (not selectedProteins.empty):
+      common_columns = common_columns[common_columns.isin(selectedProteins)]
+
+    print("proteins considered:", len(common_columns))
+
+
     # Define features (X) and target (y) for the train dataset
     X_train = train[common_columns]
     y_train = train['Age/Protein']
-    
+
     # Define features (X) and target (y) for the test dataset
     X_test = test[common_columns]
-   
+
     # Perform Recursive Feature Elimination (RFE) with SVR to select the most important proteins
-    #linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, cache_size=20000)  # Set up the SVR model
-    linear_model = LinearRegression()
-    
+    scaler = MinMaxScaler()
+    scaler.fit(X_train)
+    X_train_scaled = pd.DataFrame(scaler.transform(X_train))
+
+
+    linear_model = SVR(kernel='linear', epsilon=epsilon, tol=tol, C=c, cache_size=20000, max_iter=max_iter)  # Set up the SVR model
+
+
     rfe = RFE(estimator=linear_model, n_features_to_select=nProteins)  # Initialize RFE to select 'nProteins' features
-    rfe.fit(X_train, y_train)  # Fit RFE to the right dataset
+    rfe.fit(X_train_scaled, y_train)  # Fit RFE to the right dataset
 
     # Get the selected features and extract the corresponding protein data
     selected_features = rfe.support_  # Boolean mask indicating selected features
-    selected_proteins = X_test.columns[selected_features]  # Column names of the selected proteins
+    selected_proteins = X_train.columns[selected_features]  # Column names of the selected proteins
 
     return selected_proteins  # Return the names of the selected proteins
 
-def plot_results(original, predicted, mae, r2, title, xlim=None, ylim=None):
-    # Convert original and predicted to numeric to avoid type issues
-    original = pd.to_numeric(original, errors='coerce')
-    predicted = pd.to_numeric(predicted, errors='coerce')
 
-    data = pd.DataFrame({'Original': original, 'Predicted': predicted}).dropna()
-    data = data.sort_values(by='Original')
-
-    sorted_original = data['Original'].values
-    sorted_predicted = data['Predicted'].values
-
-    if xlim is None:
-        xlim = (min(sorted_original), max(sorted_original))
-    if ylim is None:
-        ylim = (min(sorted_predicted), max(sorted_predicted))
-
-    plt.figure(figsize=(10, 6))
-    plt.scatter(sorted_original, sorted_predicted, alpha=0.6, label='Predictions')
-    plt.plot(xlim, xlim, color='r', linestyle='--', label='Ideal Fit')
-    plt.xlim(*xlim)
-    plt.ylim(*ylim)
-    plt.xlabel('Actual Age')
-    plt.ylabel('Predicted Age')
-    plt.title(title)
-    plt.legend()
-    text_x = (xlim[0] + xlim[1]) / 2
-    text_y = ylim[1] - (ylim[1] - ylim[0]) * 0.05
-    plt.text(text_x, text_y, f'MAE: {mae:.2f}\nR²: {r2:.2f}', fontsize=12, color='black',
-             ha='center', va='top', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
-    plt.grid(visible=True, linestyle='--', alpha=0.7)
-    plt.show()
-
-
-def Plot(results1, results2, results3, mae1, r21, mae2, r22, mae3, r23):
-    """
-    Plots actual vs predicted ages for three datasets and prints evaluation metrics.
-    """
-    # Plot for Predict on Self
-    plot_results(results1['Original Age'], results1['Predicted Age'], mae1, r21, 
-                 'Predict on Self: Actual vs Predicted Age')
-
-    # Plot for Predict on Bioactive
-    plot_results(results2['Original Age'], results2['Predicted Age'], mae2, r22, 
-                 'Predict on Bioactive: Actual vs Predicted Age')
-
-    # Plot for Predict on Placebo
-    plot_results(results3['Original Age'], results3['Predicted Age'], mae3, r23, 
-                 'Predict on Placebo: Actual vs Predicted Age')
-
-
-def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
+def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c, max_iter, verbose=False):
 
     # Identify and filter the common columns across datasets
     common_columns = train.columns.intersection(test1.columns).intersection(test2.columns).intersection(test3.columns)
@@ -230,10 +198,19 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
     y_test_true2 = []
     y_test_true3 = []
 
+
+    unique_ages = pd.concat([y_training, y_test_original1, y_test_original2, y_test_original3]).unique()
     # Perform Leave-Age-Out cross-validation manually
-    for i in range(len(X_training)):
+    for i in unique_ages:
         # Separate sample i from the rest of the data
-        ageToRemove = y_training[i]
+        ageToRemove = i
+
+        if (verbose):
+          print("-----------------------------------------------------------------------------------------------------------------------------------------------------------")
+          print("Age to remove:", ageToRemove)
+          print("Current time:", datetime.now())
+          #print("-----------------------------------------------------------------------------------------------------------------------------------------------------------")
+
 
         # Remove instances with the specified age from training data
         indices_to_remove = np.where(y_training == ageToRemove)[0]
@@ -257,10 +234,24 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
         if y_test1.size == 0 and y_test2.size == 0 and y_test3.size == 0:
             continue
 
+
+        if (verbose):
+          print("X_train:", X_train)
+          print("y_train:", y_train)
+          print("X_test1_filtered:", X_test1_filtered)
+          print("y_test1:", y_test1)
+          print("X_test2_filtered:", X_test2_filtered)
+          print("y_test2:", y_test2)
+          print("X_test3_filtered:", X_test3_filtered)
+          print("y_test3:", y_test3)
+          print("-----------------------------------------------------------------------------------------------------------------------------------------------------------")
+
+
+
         # Train the model
-        #  ransac_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, cache_size=20000)
-        ransac_model = LinearRegression()
+        ransac_model = SVR(kernel='linear', epsilon=eps, tol=tol, C=c, cache_size=20000, max_iter=max_iter)
         ransac_model.fit(X_train, y_train)
+
 
         # Predict the age for the removed individual and store the results
         if y_test1.size != 0:
@@ -307,53 +298,150 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c):
 
     # Create dataframes with original and predicted ages for each test set
     result_df1 = pd.DataFrame({
-        'Original Age': y_test_true1,
-        'Predicted Age': y_test_pred1
+        'Idade Original': y_test_true1,
+        'Idade Predita': y_test_pred1
     })
     result_df2 = pd.DataFrame({
-        'Original Age': y_test_true2,
-        'Predicted Age': y_test_pred2
+        'Idade Original': y_test_true2,
+        'Idade Predita': y_test_pred2
     })
     result_df3 = pd.DataFrame({
-        'Original Age': y_test_true3,
-        'Predicted Age': y_test_pred3
+        'Idade Original': y_test_true3,
+        'Idade Predita': y_test_pred3
     })
 
     return mae1, r21, result_df1, mae2, r22, result_df2, mae3, r23, result_df3
 
 
-# Main execution
-# Set the directory path
-directory = r"C:\Users\Marlon\Desktop\Aion\XIC_PLP"
+
+
+def Plot2(results1, results2, results3, mae1, r21, mae2, r22, mae3, r23):
+    """
+    Plots actual vs predicted ages for three datasets and prints evaluation metrics.
+    """
+
+    # Plot for Predict on Self
+    plot_results2(results1['Idade Original'], results1['Idade Predita'], mae1, r21,
+                 'Predict on Self: Actual vs Predicted Age')
+    print('Predict on Self: Actual vs Predicted Age:')
+    print(results1)
+
+    # Plot for Predict on Bioactive
+    plot_results2(results2['Idade Original'], results2['Idade Predita'], mae2, r22,
+                 'Predict on Bioactive: Actual vs Predicted Age')
+    print('Predict on Bioactive: Actual vs Predicted Age')
+    print(results2)
+
+    # Plot for Predict on Placebo
+    plot_results2(results3['Idade Original'], results3['Idade Predita'], mae3, r23,
+                 'Predict on Placebo: Actual vs Predicted Age')
+    print('Predict on Placebo: Actual vs Predicted Age')
+    print(results3)
+
+
+
+def plot_results2(original, predicted, mae, r2, title, xlim=None, ylim=None):
+    """
+    Args:
+    - original: Original/actual values.
+    - predicted: Predicted values.
+    - mae: Mean Absolute Error (MAE) value for display.
+    - r2: R-squared value for display.
+    - title: Title of the plot.
+    - xlim: Optional x-axis limits.
+    - ylim: Optional y-axis limits.
+    """
+    # Convert original and predicted to numeric to avoid type issues
+    original = pd.to_numeric(original, errors='coerce')
+    predicted = pd.to_numeric(predicted, errors='coerce')
+
+    # Prepare data for sorting and processing
+    data = pd.DataFrame({'Original': original, 'Predicted': predicted}).dropna()
+    data = data.sort_values(by='Original')
+
+    sorted_original = data['Original'].values
+    sorted_predicted = data['Predicted'].values
+
+    xlim = [20, 80]
+    ylim = [20, 80]
+
+    if xlim is None:
+        xlim = (min(sorted_original), max(sorted_original))
+    if ylim is None:
+        ylim = (min(sorted_predicted), max(sorted_predicted))
+
+
+    # Plotting the results
+    plt.figure(figsize=(10, 6))
+    plt.scatter(sorted_original, sorted_predicted, alpha=0.6, label='Data Points')
+    plt.plot(xlim, xlim, color='r', linestyle='--', label='Ideal Age Prediction (y=x)')
+    plt.xlim(*xlim)
+    plt.ylim(*ylim)
+    plt.xlabel('Chronological Age (years)')
+    plt.ylabel('Predicted Proteomic Age (years)')
+    plt.title(title)
+    plt.legend()
+    text_x = (xlim[0] + xlim[1]) / 2
+    text_y = ylim[1] - (ylim[1] - ylim[0]) * 0.05
+    plt.text(text_x, text_y, f'MAE: {mae:.2f}\nR²: {r2:.2f}', fontsize=12, color='black',
+             ha='center', va='top', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'))
+    plt.grid(visible=True, linestyle='--', alpha=0.7)
+    plt.show()
+
+
+
+
+
+
+# Main execution -----------------------------------------------------------------------------------------------------------------------------------------------
+# Set the plp directory path
+directory = r"./plp"
+
+#initial selection of proteins. Keep empty pd.Index([]) to use all proteins
+selectedProteins = pd.Index([])
+proteinsToIgnore = pd.Index([])
+
+# Display all rows
+pd.set_option('display.max_rows', None)
 
 # Process each .plp file and assign to distinct variables
-people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "people.plp"))
-placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping = parse_plp_file(os.path.join(directory, "placebo.plp"))
-bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping = parse_plp_file(os.path.join(directory, "bioactive.plp"))
+people_class_descriptions, people_sparse_matrix, people_index_mapping = parse_plp_file(os.path.join(directory, "People.plp"))
+placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping = parse_plp_file(os.path.join(directory, "Placebo.plp"))
+bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping = parse_plp_file(os.path.join(directory, "Bioactive.plp"))
 
 # Convert to DataFrames
 people = plp_to_df(people_class_descriptions, people_sparse_matrix, people_index_mapping)
 placebo = plp_to_df(placebo_class_descriptions, placebo_sparse_matrix, placebo_index_mapping)
 bioactive = plp_to_df(bioactive_class_descriptions, bioactive_sparse_matrix, bioactive_index_mapping)
 
-# Convert all dataframe values to numeric where possible, excluding the first column
-people.iloc[:, 1:] = people.iloc[:, 1:].applymap(lambda x: pd.to_numeric(x, errors='coerce'))
-placebo.iloc[:, 1:] = placebo.iloc[:, 1:].applymap(lambda x: pd.to_numeric(x, errors='coerce'))
-bioactive.iloc[:, 1:] = bioactive.iloc[:, 1:].applymap(lambda x: pd.to_numeric(x, errors='coerce'))
 
-# Apply negative natural logarithm to the values, excluding the first column
-people.iloc[:, 1:] = people.iloc[:, 1:].applymap(lambda x: -np.log(x) if pd.notnull(x) and x > 0 else 0)
-placebo.iloc[:, 1:] = placebo.iloc[:, 1:].applymap(lambda x: -np.log(x) if pd.notnull(x) and x > 0 else 0)
-bioactive.iloc[:, 1:] = bioactive.iloc[:, 1:].applymap(lambda x: -np.log(x) if pd.notnull(x) and x > 0 else 0)
+print(people.columns)
+print(placebo.columns)
+print(bioactive.columns)
 
-numbersOfProteins = 300
+
+people['Age/Protein'] = people['Age/Protein'].astype(int)
+placebo['Age/Protein'] = placebo['Age/Protein'].astype(int)
+bioactive['Age/Protein'] = bioactive['Age/Protein'].astype(int)
+
+
+all_columns = set(people.columns).union(placebo.columns).union(bioactive.columns)
+people = people.reindex(columns=all_columns, fill_value=0)
+placebo = placebo.reindex(columns=all_columns, fill_value=0)
+bioactive = bioactive.reindex(columns=all_columns, fill_value=0)
+
+
+numbersOfProteins = 120
 tols = 0.1
 epsilons = 0.001
-cs = 10**14
+cs = 10**10
+max_iters=10000000
 
-selectedProteins = selectProteins(train=people, test=people, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs)
+selectedProteins = selectProteins(train=people, test=people, selectedProteins=selectedProteins, proteinsToIgnore=proteinsToIgnore, nProteins=numbersOfProteins, tol=tols, epsilon=epsilons, c=cs, max_iter=max_iters)
+mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(people, people, bioactive, placebo, selectedProteins, epsilons, tols, cs, max_iters, verbose=True)
 
-mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(people, people, bioactive, placebo, selectedProteins, epsilons, tols, cs)
 
-Plot(results1,results2,results3, mae1, r21, mae2, r22, mae3, r23)
+print("=================================================================================================")
+#PLOTTING RESULTS ======================================================================================
 
+Plot2(results1,results2,results3, mae1, r21, mae2, r22, mae3, r23)
