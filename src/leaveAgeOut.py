@@ -312,33 +312,12 @@ def LeaveAgeOut(train, test1, test2, test3, selected_proteins, eps, tol, c, max_
 
     return mae1, r21, result_df1, mae2, r22, result_df2, mae3, r23, result_df3
 
-
-
-
-def Plot2(results1, results2, results3, mae1, r21, mae2, r22, mae3, r23):
-    """
-    Plots actual vs predicted ages for three datasets and prints evaluation metrics.
-    """
-
+def Plot2(results1, mae1, r21):
     # Plot for Predict on Self
     plot_results2(results1['Idade Original'], results1['Idade Predita'], mae1, r21,
-                 'Predict on Self: Actual vs Predicted Age')
+                 'Proteome-Based Age Prediction: Leave Age Out Evaluation')
     print('Predict on Self: Actual vs Predicted Age:')
     print(results1)
-
-    # Plot for Predict on Bioactive
-    plot_results2(results2['Idade Original'], results2['Idade Predita'], mae2, r22,
-                 'Predict on Bioactive: Actual vs Predicted Age')
-    print('Predict on Bioactive: Actual vs Predicted Age')
-    print(results2)
-
-    # Plot for Predict on Placebo
-    plot_results2(results3['Idade Original'], results3['Idade Predita'], mae3, r23,
-                 'Predict on Placebo: Actual vs Predicted Age')
-    print('Predict on Placebo: Actual vs Predicted Age')
-    print(results3)
-
-
 
 def plot_results2(original, predicted, mae, r2, title, xlim=None, ylim=None):
     """
