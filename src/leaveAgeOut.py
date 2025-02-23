@@ -444,4 +444,4 @@ mae1, r21, results1, mae2, r22, results2, mae3, r23, results3 = LeaveAgeOut(peop
 print("=================================================================================================")
 #PLOTTING RESULTS ======================================================================================
 
-Plot2(results1,results2,results3, mae1, r21, mae2, r22, mae3, r23)
+Plot2(results1, mae1, r21)
