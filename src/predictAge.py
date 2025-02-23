@@ -385,7 +385,7 @@ def compare_treatments_ttest(older_bioactive, younger_bioactive, older_placebo, 
 
 # Main execution -----------------------------------------------------------------------------------------------------------------------------------------------
 # Set the plp directory path
-directory = r"./plp"
+directory = os.path.join(os.path.dirname(__file__), "..", "plp")
 
 #initial selection of proteins. Keep empty pd.Index([]) to use all proteins
 selectedProteins = pd.Index([])
